@@ -10,7 +10,8 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+# మోడల్ పేరును స్థిరమైన లేటెస్ట్ వెర్షన్‌కు మార్చాం
+model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
 # Start Command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,7 +68,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"AI స్పందించడంలో లోపం: {e}")
 
 def main():
-    # Fix for Python 3.10+ and Render event loops
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
