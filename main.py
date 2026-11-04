@@ -1,15 +1,16 @@
 import os
 import asyncio
 import yfinance as yf
-import google.generativeai as genai
+from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# API Keys
+# Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Official Google GenAI Client
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Start Command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,23 +55,19 @@ async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"సమాచారం పొందడంలో లోపం తలెత్తింది: {e}")
 
-# Gemini AI Response with Fallback
+# Gemini AI Response
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
-    # 404 సమస్య రాకుండా వరుసగా మోడల్స్‌ను ప్రయత్నిస్తుంది
-    for model_name in ["gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash-latest"]:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(user_text)
-            if response.text:
-                await update.message.reply_text(response.text)
-                return
-        except Exception:
-            continue
-            
-    await update.message.reply_text("క్షమించండి, ప్రస్తుతం AI సర్వర్ స్పందించడం లేదు. దయచేసి కాసేపటి తర్వాత మళ్లీ ప్రయత్నించండి.")
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=user_text,
+        )
+        await update.message.reply_text(response.text)
+    except Exception as e:
+        await update.message.reply_text(f"AI స్పందించడంలో లోపం: {e}")
 
 def main():
     try:
