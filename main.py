@@ -10,17 +10,15 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-# మోడల్ పేరును స్థిరమైన లేటెస్ట్ వెర్షన్‌కు మార్చాం
-model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
 # Start Command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
-        "నమస్కారం! నేను మీ AI అసిస్టెంట్ ఏజెంట్‌ని.\n\n"
+        "నమస్కారం! నేను మన కోదాడ AI అసిస్టెంట్ ఏజెంట్‌ని.\n\n"
         "నేను మీకు ఈ క్రింది పనులలో సహాయం చేయగలను:\n"
-        "1. స్టాక్ మార్కెట్ సమాచారం (ఉదా: /stock TATAMOTORS)\n"
-        "2. కంటెంట్ క్రియేషన్ & స్క్రిప్ట్స్\n"
-        "3. వ్యాపార లెక్కలు & సలహాలు\n\n"
+        "1. స్టాక్ మార్కెట్ వివరాలు (ఉదా: /stock TATAMOTORS)\n"
+        "2. కంటెంట్ క్రియేషన్, వ్యాపార ఆలోచనలు & స్క్రిప్ట్స్\n"
+        "3. సాధారణ ప్రశ్నలు & సలహాలు\n\n"
         "మీకు కావాల్సిన సందేహాన్ని నేరుగా టైప్ చేసి పంపండి!"
     )
     await update.message.reply_text(welcome_msg)
@@ -56,16 +54,23 @@ async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"సమాచారం పొందడంలో లోపం తలెత్తింది: {e}")
 
-# Gemini AI Response
+# Gemini AI Response with Fallback
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
-    try:
-        response = model.generate_content(user_text)
-        await update.message.reply_text(response.text)
-    except Exception as e:
-        await update.message.reply_text(f"AI స్పందించడంలో లోపం: {e}")
+    # 404 సమస్య రాకుండా వరుసగా మోడల్స్‌ను ప్రయత్నిస్తుంది
+    for model_name in ["gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash-latest"]:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(user_text)
+            if response.text:
+                await update.message.reply_text(response.text)
+                return
+        except Exception:
+            continue
+            
+    await update.message.reply_text("క్షమించండి, ప్రస్తుతం AI సర్వర్ స్పందించడం లేదు. దయచేసి కాసేపటి తర్వాత మళ్లీ ప్రయత్నించండి.")
 
 def main():
     try:
