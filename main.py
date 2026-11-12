@@ -1,9 +1,26 @@
 import os
 import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import yfinance as yf
 from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Render Web Service కోసం Dummy HTTP Server
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Kodad AI Agent is Alive!")
+
+    def log_message(self, format, *args):
+        pass  # అనవసరమైన లాగ్స్ రాకుండా ఆపుతుంది
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
 
 # Environment Variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -70,6 +87,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"AI స్పందించడంలో లోపం: {e}")
 
 def main():
+    # వెబ్ పోర్ట్‌ను బ్యాక్‌గ్రౌండ్‌లో స్టార్ట్ చేస్తుంది
+    threading.Thread(target=run_health_server, daemon=True).start()
+
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
