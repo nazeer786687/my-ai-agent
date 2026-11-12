@@ -7,12 +7,16 @@ from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Render Web Service కోసం Dummy HTTP Server
+# Render & UptimeRobot కోసం Dummy HTTP Server (GET & HEAD సపోర్ట్‌తో)
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Kodad AI Agent is Alive!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
     def log_message(self, format, *args):
         pass  # అనవసరమైన లాగ్స్ రాకుండా ఆపుతుంది
@@ -79,7 +83,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         response = client.models.generate_content(
-     model="gemini-3.8-flash",
+            model="gemini-3.8-flash",
             contents=user_text,
         )
         await update.message.reply_text(response.text)
