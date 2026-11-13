@@ -48,24 +48,41 @@ USER_WATCHLIST = [
     "ITC", "LT", "SUNPHARMA", "TITAN", "HINDUNILVR"
 ]
 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 def ask_gemini(prompt: str, use_search: bool = False) -> str:
     config = types.GenerateContentConfig(
         tools=[{"google_search": {}}]
     ) if use_search else None
 
-    last_error = ""
-    for attempt in range(4):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=config,
-            )
-            return response.text
-        except Exception as e:
-            last_error = str(e)
-            time.sleep(2)
-    raise RuntimeError(last_error)
+    # 1. ముందుగా Gemini ప్రయత్నిస్తుంది (కోటా వృథా కాకుండా 1 సారి మాత్రమే)
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config=config,
+        )
+        return response.text
+    except Exception as gemini_err:
+        # 2. Gemini కోటా అయిపోయినా లేదా బిజీగా ఉన్నా ఆటోమేటిక్‌గా Groq కు వెళ్తుంది
+        if not GROQ_API_KEY:
+            raise RuntimeError(f"Gemini Limit & No Groq Key: {gemini_err}")
+
+        groq_resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+            },
+            timeout=30,
+        )
+        groq_resp.raise_for_status()
+        return groq_resp.json()["choices"][0]["message"]["content"]
 
 def get_gold_silver_text() -> str:
     try:
