@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import asyncio
 import threading
@@ -22,7 +23,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Kodad AI Video & Stock Agent is Alive!")
+        self.wfile.write(b"Kodad AI Video & Zerodha Watchlist Agent is Alive!")
 
     def do_HEAD(self):
         self.send_response(200)
@@ -41,6 +42,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+# మీ Zerodha లాంగ్-టర్మ్ సేఫ్టీ వాచ్‌లిస్ట్ (మీరు /addstock, /delstock తో ఎప్పుడైనా మార్చుకోవచ్చు)
+USER_WATCHLIST = [
+    "TCS", "INFY", "HDFCBANK", "ICICIBANK", "RELIANCE",
+    "ITC", "LT", "SUNPHARMA", "TITAN", "HINDUNILVR"
+]
 
 def ask_gemini(prompt: str, use_search: bool = False) -> str:
     models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash"]
@@ -87,48 +94,57 @@ def get_gold_silver_text() -> str:
     except Exception:
         return "🟡 *బంగారం & వెండి:* ప్రస్తుతం లైవ్ ఫీడ్ బిజీగా ఉంది, కాసేపట్లో ప్రయత్నించండి."
 
-def check_single_stock(sym: str):
+def analyze_watchlist_stock(sym: str):
     try:
         hist = yf.Ticker(f"{sym}.NS").history(period="1y")
-        if len(hist) >= 200:
+        if not hist.empty:
             cmp = round(hist["Close"].iloc[-1], 2)
-            prev = round(hist["Close"].iloc[-2], 2)
-            dma200 = round(hist["Close"].tail(200).mean(), 2)
-            dma50 = round(hist["Close"].tail(50).mean(), 2)
-            chg_pct = round(((cmp - prev) / prev) * 100, 2)
-            if cmp > dma200 and cmp <= dma50 * 1.08:
-                return (chg_pct, sym, cmp, dma200)
+            high_1y = round(hist["High"].max(), 2)
+            dma200 = round(hist["Close"].tail(200).mean(), 2) if len(hist) >= 200 else cmp
+            discount_pct = round(((high_1y - cmp) / high_1y) * 100, 1)
+
+            if discount_pct >= 12 and cmp >= dma200 * 0.95:
+                status = f"🎯 బెస్ట్ డిస్కౌంట్ (-{discount_pct}%)"
+            elif cmp > dma200:
+                status = f"✅ సేఫ్ ట్రెండ్ (-{discount_pct}%)"
+            else:
+                status = f"⚠️ 200-DMA కింద (-{discount_pct}%)"
+
+            return (discount_pct, sym, cmp, dma200, status)
     except Exception:
         pass
     return None
 
-def build_market_report() -> str:
-    bullion_block = get_gold_silver_text()
-    safe_watchlist = [
-        "TCS", "INFY", "HDFCBANK", "ICICIBANK", "RELIANCE",
-        "ITC", "LT", "SUNPHARMA", "BHARTIARTL", "TITAN", "SBIN", "HINDUNILVR"
-    ]
+def build_watchlist_report() -> str:
+    if not USER_WATCHLIST:
+        return "మీ వాచ్‌లిస్ట్ ఖాళీగా ఉంది. `/addstock TCS` ద్వారా స్టాక్స్ జత చేయండి."
+
     with ThreadPoolExecutor(max_workers=6) as executor:
-        results = list(executor.map(check_single_stock, safe_watchlist))
+        results = list(executor.map(analyze_watchlist_stock, USER_WATCHLIST))
 
-    picks = [r for r in results if r is not None]
-    picks.sort(reverse=True)
-    top_picks = picks[:5]
+    valid = [r for r in results if r is not None]
+    valid.sort(reverse=True)  # ఎక్కువ డిస్కౌంట్ ఉన్నవి పైన వస్తాయి
 
-    stock_lines = ""
-    if top_picks:
-        for chg, sym, cmp, dma200 in top_picks:
-            sign = "+" if chg >= 0 else ""
-            stock_lines += f"• *{sym}*: ₹{cmp} ({sign}{chg}%) | 200-DMA: ₹{dma200}\n"
-    else:
-        stock_lines = "• ప్రస్తుతం ప్రధాన స్టాక్స్ కన్సాలిడేషన్‌లో ఉన్నాయి.\n"
+    lines = ""
+    for disc, sym, cmp, dma200, status in valid:
+        lines += f"• *{sym}*: ₹{cmp} | 200-DMA: ₹{dma200} | {status}\n"
 
     return (
-        "📈 *డైలీ మార్కెట్ & సేఫ్ స్టాక్స్ నివేదిక*\n\n"
+        "📋 *మీ Zerodha లాంగ్-టర్మ్ సేఫ్టీ వాచ్‌లిస్ట్*\n"
+        "_(52-వారాల గరిష్టం నుండి ఎక్కువ డిస్కౌంట్ ఉన్నవి పైన చూపబడ్డాయి)_\n\n"
+        f"{lines}\n"
+        "➕ కొత్త స్టాక్ యాడ్ చేయడానికి: `/addstock సింబల్`\n"
+        "➖ తీసేయడానికి: `/delstock సింబల్`"
+    )
+
+def build_market_report() -> str:
+    bullion_block = get_gold_silver_text()
+    watchlist_block = build_watchlist_report()
+    return (
+        "📈 *డైలీ మార్కెట్ & Zerodha అలర్ట్ నివేదిక*\n\n"
         f"{bullion_block}\n\n"
-        "🛡️ *లాంగ్-టర్మ్ సేఫ్టీ వాచ్‌లిస్ట్ (200-DMA పైన ఉన్నవి):*\n"
-        f"{stock_lines}\n"
-        "💡 _Zerodha లాంగ్-టర్మ్ సేఫ్టీ ఫిల్టర్ ఆధారంగా చూపబడినవి._"
+        f"{watchlist_block}\n\n"
+        "💡 _Zerodha లాంగ్-టర్మ్ క్యాపిటల్ సేఫ్టీ ఫిల్టర్ ఆధారంగా రూపొందించబడింది._"
     )
 
 def generate_full_mp4_video(topic: str, chat_id: int) -> tuple:
@@ -215,23 +231,49 @@ def generate_full_mp4_video(topic: str, chat_id: int) -> tuple:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
-        "నమస్కారం నజీర్ గారు! మీ *కోదాడ AI వీడియో & మార్కెట్ అసిస్టెంట్* సిద్ధంగా ఉంది.\n\n"
+        "నమస్కారం నజీర్ గారు! మీ *కోదాడ AI వీడియో & Zerodha అసిస్టెంట్* సిద్ధంగా ఉంది.\n\n"
         "🎬 *YouTube ఆటో వీడియో మేకర్:*\n"
-        "• `/ytvideo <టాపిక్>` — నేరుగా బొమ్మలు + తెలుగు వాయిస్‌తో **MP4 YouTube Short వీడియో** తయారు చేస్తుంది!\n"
-        "• `/yt <టాపిక్>` — పెద్ద వీడియోల కోసం స్క్రిప్ట్, ప్రాంప్ట్‌లు & MP3 ఆడియో ఇస్తుంది\n\n"
-        "📊 *స్టాక్ మార్కెట్ & బులియన్:*\n"
+        "• `/ytvideo <టాపిక్>` — బొమ్మలు + తెలుగు వాయిస్‌తో పూర్తి **MP4 YouTube Short**\n"
+        "• `/yt <టాపిక్>` — పెద్ద వీడియోల కోసం స్క్రిప్ట్, ప్రాంప్ట్‌లు & MP3 ఆడియో\n\n"
+        "📊 *Zerodha వాచ్‌లిస్ట్ & మార్కెట్:*\n"
+        "• `/watchlist` — మీ వాచ్‌లిస్ట్ స్టాక్స్ డిస్కౌంట్ & సేఫ్టీ స్థితి\n"
+        "• `/addstock <సింబల్>` — వాచ్‌లిస్ట్‌లో కొత్త స్టాక్ చేర్చడం\n"
+        "• `/delstock <సింబల్>` — వాచ్‌లిస్ట్ నుండి స్టాక్ తీసేయడం\n"
         "• `/gold` — బంగారం & వెండి ధరలు (2 సెకన్లలో)\n"
-        "• `/market` — బెస్ట్ సేఫ్ స్టాక్స్ + గోల్డ్ & సిల్వర్ రిపోర్ట్\n"
-        "• `/stock <సింబల్>` — ఏదైనా NSE స్టాక్ విశ్లేషణ"
+        "• `/market` — పూర్తి మార్కెట్ & వాచ్‌లిస్ట్ రిపోర్ట్"
     )
     await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 
+async def watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    report = await asyncio.to_thread(build_watchlist_report)
+    await update.message.reply_text(report, parse_mode="Markdown")
+
+async def addstock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("ఉదాహరణ: `/addstock TATAMOTORS`", parse_mode="Markdown")
+        return
+    sym = context.args[0].upper().replace(".NS", "")
+    if sym in USER_WATCHLIST:
+        await update.message.reply_text(f"*{sym}* ఇప్పటికే మీ వాచ్‌లిస్ట్‌లో ఉంది పప్పా!", parse_mode="Markdown")
+        return
+    USER_WATCHLIST.append(sym)
+    await update.message.reply_text(f"✅ *{sym}* మీ Zerodha వాచ్‌లిస్ట్‌లో చేర్చబడింది! `/watchlist` నొక్కి చూడండి.", parse_mode="Markdown")
+
+async def delstock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("ఉదాహరణ: `/delstock SBIN`", parse_mode="Markdown")
+        return
+    sym = context.args[0].upper().replace(".NS", "")
+    if sym in USER_WATCHLIST:
+        USER_WATCHLIST.remove(sym)
+        await update.message.reply_text(f"🗑️ *{sym}* మీ వాచ్‌లిస్ట్ నుండి తొలగించబడింది.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"*{sym}* మీ వాచ్‌లిస్ట్‌లో లేదు.", parse_mode="Markdown")
+
 async def ytvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text(
-            "ఉదాహరణకు ఇలా పంపండి:\n`/ytvideo కొంటె కామయ్య పిసినారితనం కథ`",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("ఉదాహరణ:\n`/ytvideo కొంటె కామయ్య పిసినారితనం కథ`", parse_mode="Markdown")
         return
 
     topic = " ".join(context.args)
@@ -246,7 +288,7 @@ async def ytvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(mp4_path, "rb") as vid:
             await update.message.reply_video(
                 video=vid,
-                caption=f"🎬 *{title}*\n\nమీ ASN TOONS YouTube Short వీడియో సిద్ధంగా ఉంది! నేరుగా అప్‌లోడ్ చేసుకోవచ్చు.",
+                caption=f"🎬 *{title}*\n\nమీ ASN TOONS YouTube Short వీడియో సిద్ధంగా ఉంది!",
                 parse_mode="Markdown",
                 supports_streaming=True
             )
@@ -341,6 +383,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lower_text = user_text.lower()
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
+    if "watchlist" in lower_text:
+        res = await asyncio.to_thread(build_watchlist_report)
+        await update.message.reply_text(res, parse_mode="Markdown")
+        return
+
     if ("gold" in lower_text or "silver" in lower_text) and "stock" not in lower_text:
         res = await asyncio.to_thread(get_gold_silver_text)
         await update.message.reply_text(res, parse_mode="Markdown")
@@ -382,6 +429,9 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("watchlist", watchlist))
+    app.add_handler(CommandHandler("addstock", addstock))
+    app.add_handler(CommandHandler("delstock", delstock))
     app.add_handler(CommandHandler("ytvideo", ytvideo))
     app.add_handler(CommandHandler("yt", youtube_creator))
     app.add_handler(CommandHandler("gold", gold))
@@ -396,7 +446,7 @@ def main():
     scheduler.add_job(scheduled_morning_alert, "cron", hour=9, minute=0, args=[app, loop])
     scheduler.start()
 
-    print("Kodad AI Auto Video & Stock Agent is running...")
+    print("Kodad AI Auto Video & Zerodha Watchlist Agent is running...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
