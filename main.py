@@ -55,7 +55,7 @@ def ask_gemini(prompt: str, use_search: bool = False) -> str:
         tools=[{"google_search": {}}]
     ) if use_search else None
 
-    # 1. ముందుగా Gemini ప్రయత్నిస్తుంది (కోటా వృథా కాకుండా 1 సారి మాత్రమే)
+    # 1. ముందుగా Gemini ప్రయత్నిస్తుంది
     try:
         response = client.models.generate_content(
             model="gemini-3.8-flash",
@@ -64,26 +64,33 @@ def ask_gemini(prompt: str, use_search: bool = False) -> str:
         )
         return response.text
     except Exception as gemini_err:
-        # 2. Gemini కోటా అయిపోయినా లేదా బిజీగా ఉన్నా ఆటోమేటిక్‌గా Groq కు వెళ్తుంది
+        # 2. Gemini కోటా అయిపోతే Groq లో ప్రస్తుతం పనిచేస్తున్న మోడల్స్ ప్రయత్నిస్తుంది
         if not GROQ_API_KEY:
             raise RuntimeError(f"Gemini Limit & No Groq Key: {gemini_err}")
 
-        groq_resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "llama-3.3-70b-versatile",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7,
-            },
-            timeout=30,
-        )
-        groq_resp.raise_for_status()
-        return groq_resp.json()["choices"][0]["message"]["content"]
-
+        groq_models = ["llama-3.1-8b-instant", "openai/gpt-oss-120b", "qwen/qwen3-32b"]
+        last_groq_err = ""
+        for g_model in groq_models:
+            try:
+                groq_resp = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": g_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                    },
+                    timeout=30,
+                )
+                if groq_resp.status_code == 200:
+                    return groq_resp.json()["choices"][0]["message"]["content"]
+                last_groq_err = f"{g_model}: {groq_resp.status_code} {groq_resp.text}"
+            except Exception as e:
+                last_groq_err = str(e)
+        raise RuntimeError(last_groq_err)
 def get_gold_silver_text() -> str:
     try:
         with ThreadPoolExecutor(max_workers=3) as executor:
