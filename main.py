@@ -49,25 +49,22 @@ USER_WATCHLIST = [
 ]
 
 def ask_gemini(prompt: str, use_search: bool = False) -> str:
-    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash"]
     config = types.GenerateContentConfig(
         tools=[{"google_search": {}}]
     ) if use_search else None
 
     last_error = ""
-    for attempt in range(3):
-        for model_name in models_to_try:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config,
-                )
-                return response.text
-            except Exception as e:
-                last_error = str(e)
-                continue
-        time.sleep(2)
+    for attempt in range(4):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt,
+                config=config,
+            )
+            return response.text
+        except Exception as e:
+            last_error = str(e)
+            time.sleep(2)
     raise RuntimeError(last_error)
 
 def get_gold_silver_text() -> str:
