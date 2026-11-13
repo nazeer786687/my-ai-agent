@@ -4,3 +4,7 @@ yfinance
 gTTS
 APScheduler
 pytz
+requests
+Pillow
+moviepy==1.0.3
+numpy<2.0
