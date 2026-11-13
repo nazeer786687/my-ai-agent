@@ -146,7 +146,6 @@ def build_market_report() -> str:
         "💡 _Zerodha లాంగ్-టర్మ్ క్యాపిటల్ సేఫ్టీ ఫిల్టర్ ఆధారంగా రూపొందించబడింది._"
     )
 
-# Ultra-Fast & Low-Memory MP4 Generator (512MB RAM లో అస్సలు క్రాష్ అవ్వదు!)
 def generate_full_mp4_video(topic: str, chat_id: int) -> tuple:
     prompt = (
         f"Create a 4-scene Telugu YouTube Shorts moral comedy story for 'ASN TOONS' on the topic: '{topic}'. "
@@ -195,14 +194,12 @@ def generate_full_mp4_video(topic: str, chat_id: int) -> tuple:
                 img = Image.open(BytesIO(resp.content)).convert("RGB")
                 img = img.resize((540, 960), Image.Resampling.LANCZOS)
             except Exception:
-                # ఇమేజ్ ఆలస్యమైతే ప్లెయిన్ కలర్ బ్యాకప్ వాడుతుంది (వీడియో ఆగిపోకుండా!)
                 colors = [(255, 220, 150), (180, 230, 255), (200, 255, 200), (255, 200, 220)]
                 img = Image.new("RGB", (540, 960), colors[idx % 4])
 
             img.save(img_path, quality=80)
             temp_files.append(img_path)
 
-            # మెమరీ సేఫ్ స్టాటిక్ క్లిప్ (క్రాష్ అవ్వకుండా 10 సెకన్లలో రెండర్ అవుతుంది)
             img_clip = ImageClip(img_path).set_duration(duration).set_audio(audio_clip)
             clips.append(img_clip)
 
@@ -386,4 +383,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "watchlist" in lower_text:
         res = await asyncio.to_thread(build_watchlist_report)
-        await update.message.reply_text(res, parse_mode="Markdown
+        await update.message.reply_text(res, parse_mode="Markdown")
+        return
+
+    if ("gold" in lower_text or "silver" in lower_text) and "stock" not in lower_text:
+        res = await asyncio.to_thread(get_gold_silver_text)
+        await update.message.reply_text(res, parse_mode="Markdown")
+        return
+
+    if ("best stock" in lower_text or ("gold" in lower_text and "stock" in lower_text)):
+        res = await asyncio.to_thread(build_market_report)
+        await update.message.reply_text(res, parse_mode="Markdown")
+        return
+
+    try:
+        reply_text = await asyncio.to_thread(ask_gemini, user_text, True)
+        for i in range(0, len(reply_text), 4000):
+            await update.message.reply_text(reply_text[i:i+4000])
+    except Exception as e:
+        await update.message.reply_text(f"సర్వర్ బిజీగా ఉంది, ఒక్క నిమిషం తర్వాత ప్రయత్నించండి. ({e})")
+
+def scheduled_morning_alert(app, loop):
+    if not MY_CHAT_ID:
+        return
+    try:
+        report = build_market_report()
+        asyncio.run_coroutine_threadsafe(
+            app.bot.send_message(chat_id=int(MY_CHAT_ID), text=f"☀️ *శుభోదయం నజీర్ గారు!*\n\n{report}", parse_mode="Markdown"),
+            loop
+        )
+    except Exception as e:
+        print(f"Scheduled alert error: {e}")
+
+def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("watchlist", watchlist))
+    app.add_handler(CommandHandler("addstock", addstock))
+    app.add_handler(CommandHandler("delstock", delstock))
+    app.add_handler(CommandHandler("ytvideo", ytvideo))
+    app.add_handler(CommandHandler("yt", youtube_creator))
+    app.add_handler(CommandHandler("gold", gold))
+    app.add_handler(CommandHandler("silver", gold))
+    app.add_handler(CommandHandler("market", market))
+    app.add_handler(CommandHandler("beststocks", market))
+    app.add_handler(CommandHandler("stock", stock))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    ist = pytz.timezone("Asia/Kolkata")
+    scheduler = BackgroundScheduler(timezone=ist)
+    scheduler.add_job(scheduled_morning_alert, "cron", hour=9, minute=0, args=[app, loop])
+    scheduler.start()
+
+    print("Kodad AI Auto Video & Zerodha Watchlist Agent is running...")
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
