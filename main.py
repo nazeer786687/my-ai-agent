@@ -43,7 +43,7 @@ MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def ask_gemini(prompt: str, use_search: bool = False) -> str:
-   models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"] 
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
     config = types.GenerateContentConfig(
         tools=[{"google_search": {}}]
     ) if use_search else None
@@ -62,7 +62,6 @@ def ask_gemini(prompt: str, use_search: bool = False) -> str:
             continue
     raise RuntimeError(last_error)
 
-# 2 సెకన్లలో బంగారం & వెండి ధరలు
 def get_gold_silver_text() -> str:
     try:
         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -130,8 +129,7 @@ def build_market_report() -> str:
         "💡 _Zerodha లాంగ్-టర్మ్ సేఫ్టీ ఫిల్టర్ ఆధారంగా చూపబడినవి._"
     )
 
-# పూర్తి MP4 YouTube Short వీడియో తయారు చేసే ఫంక్షన్ (Low Memory Safe)
-def generate_full_mp4_video(topic: str, chat_id: int) -> tuple[str, str]:
+def generate_full_mp4_video(topic: str, chat_id: int) -> tuple:
     prompt = (
         f"Create a 4-scene Telugu YouTube Shorts moral comedy story for 'ASN TOONS' on the topic: '{topic}'. "
         f"Return ONLY valid JSON without any markdown backticks, in this exact format:\n"
@@ -161,7 +159,6 @@ def generate_full_mp4_video(topic: str, chat_id: int) -> tuple[str, str]:
             narration = sc["narration"]
             img_prompt = sc["image_prompt"]
 
-            # 1. తెలుగు ఆడియో క్లిప్ తయారీ
             aud_path = f"sc_{chat_id}_{idx}.mp3"
             tts = gTTS(text=narration, lang="te", slow=False)
             tts.save(aud_path)
@@ -170,7 +167,6 @@ def generate_full_mp4_video(topic: str, chat_id: int) -> tuple[str, str]:
             audio_clip = AudioFileClip(aud_path)
             duration = max(audio_clip.duration + 0.3, 3.0)
 
-            # 2. Pollinations AI నుండి 2D కార్టూన్ ఇమేజ్ డౌన్‌లోడ్ (720x1280 Shorts సైజ్)
             img_path = f"sc_{chat_id}_{idx}.jpg"
             encoded_prompt = urllib.parse.quote(img_prompt)
             img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=720&height=1280&nologo=true&seed={idx+10}"
@@ -181,7 +177,6 @@ def generate_full_mp4_video(topic: str, chat_id: int) -> tuple[str, str]:
             img.save(img_path, quality=85)
             temp_files.append(img_path)
 
-            # 3. జూమ్ ఎఫెక్ట్ + ఆడియో జత చేయడం
             img_clip = (
                 ImageClip(img_path)
                 .set_duration(duration)
@@ -203,7 +198,6 @@ def generate_full_mp4_video(topic: str, chat_id: int) -> tuple[str, str]:
             logger=None
         )
 
-        # మెమరీ క్లీనప్
         final_video.close()
         for c in clips:
             c.close()
