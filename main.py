@@ -43,7 +43,7 @@ MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def ask_gemini(prompt: str, use_search: bool = False) -> str:
-    models_to_try = ["gemini-3.8-flash", "gemini-3.8-flash-lite"]
+   models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"] 
     config = types.GenerateContentConfig(
         tools=[{"google_search": {}}]
     ) if use_search else None
