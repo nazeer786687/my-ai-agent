@@ -22,7 +22,7 @@ MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Render Web Service Port Keeper (Prevents Timed Out)
+# Render Web Service Port Keeper
 app = Flask(__name__)
 
 @app.route("/")
@@ -157,7 +157,7 @@ def del_stock(message):
         save_watchlist(stocks)
     bot.reply_to(message, f"🗑️ {sym} తీసివేయబడింది.")
 
-# 4. HD Telugu 2D Cartoon Short Video (/ytvideo)
+# 4. Fast & Low-Memory Telugu Cartoon Short Video (/ytvideo)
 @bot.message_handler(commands=["ytvideo"])
 def handle_ytvideo(message):
     topic = message.text.replace("/ytvideo", "").strip()
@@ -166,17 +166,17 @@ def handle_ytvideo(message):
 
     bot.reply_to(
         message,
-        f"🎬 *'{topic}'* కోసం HD 2D కార్టూన్ + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (30-45 సెకన్లు)...",
+        f"🎬 *'{topic}'* కోసం కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (15-20 సెకన్లు)...",
         parse_mode="Markdown"
     )
 
     try:
         story_prompt = (
-            f"Write an engaging, funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
+            f"Write a funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
             "Return ONLY a valid JSON array of 4 objects (no markdown, no extra text). "
             "Each object must have: "
-            "'telugu_narration' (2 expressive, natural spoken Telugu sentences with proper punctuation for voiceover) and "
-            "'image_prompt' (detailed Pixar/Disney 2D Indian village cartoon illustration in English, expressive characters, warm sunlight, high detail)."
+            "'telugu_narration' (2 expressive, natural spoken Telugu sentences with proper punctuation) and "
+            "'image_prompt' (vivid Disney 2D Indian village cartoon illustration in English, expressive characters, bright colors)."
         )
         raw = ask_ai(story_prompt)
         start_idx = raw.find("[")
@@ -188,79 +188,14 @@ def handle_ytvideo(message):
 
         for idx, scene in enumerate(scenes[:4]):
             narration = scene["telugu_narration"]
-            style_suffix = ", Disney Pixar 2D cartoon illustration, expressive faces, rich vibrant colors, clean digital art, 4k"
+            style_suffix = ", Disney 2D cartoon illustration, expressive faces, vibrant colors, clean digital art"
             img_prompt = requests.utils.quote(scene["image_prompt"] + style_suffix)
-            img_url = f"https://image.pollinations.ai/prompt/{img_prompt}?width=720&height=1280&model=flux&nologo=true&seed={idx+42}"
+            img_url = f"https://image.pollinations.ai/prompt/{img_prompt}?width=600&height=1066&model=flux&nologo=true&seed={idx+42}"
 
             img_path = f"scene_{idx}.jpg"
             aud_path = f"voice_{idx}.mp3"
             temp_files.extend([img_path, aud_path])
 
             try:
-                r = requests.get(img_url, timeout=30)
-                if r.status_code == 200 and len(r.content) > 2000:
-                    with open(img_path, "wb") as f:
-                        f.write(r.content)
-                else:
-                    raise ValueError("Image download fallback")
-            except Exception:
-                colors = [(255, 220, 130), (180, 235, 255), (200, 255, 200), (255, 200, 220)]
-                im = Image.new("RGB", (720, 1280), colors[idx % 4])
-                im.save(img_path)
-
-            make_telugu_voice(narration, aud_path)
-
-            audio_clip = AudioFileClip(aud_path)
-            dur = audio_clip.duration + 0.4
-
-            base_clip = ImageClip(img_path).with_duration(dur)
-            zoomed_clip = base_clip.resized(lambda t: 1 + 0.04 * (t / dur)).with_position("center")
-            final_scene = zoomed_clip.with_audio(audio_clip)
-            clips.append(final_scene)
-
-        final_video = concatenate_videoclips(clips, method="compose")
-        out_path = "asn_toons_hd.mp4"
-        temp_files.append(out_path)
-        final_video.write_videofile(
-            out_path,
-            fps=20,
-            codec="libx264",
-            audio_codec="aac",
-            bitrate="2500k",
-            logger=None
-        )
-
-        with open(out_path, "rb") as vf:
-            bot.send_video(message.chat.id, vf, caption=f"🎥 *ASN TOONS HD:* {topic}", parse_mode="Markdown")
-
-        final_video.close()
-        for c in clips:
-            c.close()
-        for tf in temp_files:
-            if os.path.exists(tf):
-                os.remove(tf)
-
-    except Exception as e:
-        bot.send_message(message.chat.id, f"⚠️ వీడియో తయారీలో లోపం: {e}")
-
-# 5. General Chat Handler
-@bot.message_handler(func=lambda m: True)
-def handle_all(message):
-    try:
-        reply = ask_ai(f"Reply in helpful, polite Telugu to: {message.text}")
-        bot.reply_to(message, reply)
-    except Exception as e:
-        bot.reply_to(message, f"సర్వర్ బిజీగా ఉంది: {e}")
-
-if __name__ == "__main__":
-    # Start Flask server in background so Render detects the open port immediately
-    threading.Thread(target=run_web_server, daemon=True).start()
-    time.sleep(3)
-    bot.remove_webhook()
-    print("ASN TOONS HD & Zerodha Agent Started...")
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=1, timeout=30)
-        except Exception as e:
-            print(f"Polling retry: {e}")
-            time.sleep(5)
+                r = requests.get(img_url, timeout=25)
+                if r.status_code == 200 and len(r.content
