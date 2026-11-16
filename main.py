@@ -1,12 +1,11 @@
 import os
 import json
-import time
-import textwrap
+import asyncio
 import requests
 import yfinance as yf
 import telebot
-from gtts import gTTS
-from PIL import Image, ImageDraw, ImageFont
+import edge_tts
+from PIL import Image
 from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 from google import genai
 from google.genai import types
@@ -80,7 +79,15 @@ def ask_ai(prompt: str, use_search: bool = False) -> str:
             last_err = str(e)
     raise RuntimeError(f"Groq Error: {last_err}")
 
-# 3. Stock Watchlist Command
+# Natural Human-like Telugu Voice Generator (Microsoft Neural TTS)
+async def _generate_voice_async(text: str, output_file: str, voice: str = "te-IN-MohanNeural"):
+    communicate = edge_tts.Communicate(text, voice, rate="+5%")
+    await communicate.save(output_file)
+
+def make_telugu_voice(text: str, output_file: str):
+    asyncio.run(_generate_voice_async(text, output_file))
+
+# 3. Stock Watchlist Commands
 @bot.message_handler(commands=["watchlist"])
 def handle_watchlist(message):
     bot.reply_to(message, "📊 మీ Zerodha లాంగ్-టర్మ్ సేఫ్టీ వాచ్‌లిస్ట్ లోడ్ అవుతోంది...")
@@ -136,7 +143,7 @@ def del_stock(message):
         save_watchlist(stocks)
     bot.reply_to(message, f"🗑️ {sym} తీసివేయబడింది.")
 
-# 4. Automated Telugu 2D Cartoon Short Video (/ytvideo)
+# 4. HD Telugu 2D Cartoon Short Video (/ytvideo)
 @bot.message_handler(commands=["ytvideo"])
 def handle_ytvideo(message):
     topic = message.text.replace("/ytvideo", "").strip()
@@ -145,16 +152,17 @@ def handle_ytvideo(message):
 
     bot.reply_to(
         message,
-        f"🎬 *'{topic}'* కోసం 2D కార్టూన్ బొమ్మలు + తెలుగు వాయిస్‌తో MP4 వీడియో తయారు చేస్తున్నాను (20-30 సెకన్లు)...",
+        f"🎬 *'{topic}'* కోసం HD 2D కార్టూన్ + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (30-45 సెకన్లు)...",
         parse_mode="Markdown"
     )
 
     try:
         story_prompt = (
-            f"Write a very funny 4-scene Telugu moral comedy short story for YouTube Shorts on the topic: '{topic}'. "
-            "Return ONLY valid JSON array of 4 objects, no markdown, no extra text. "
-            "Each object must have keys: 'telugu_narration' (2 short funny Telugu sentences) and "
-            "'image_prompt' (vivid 2D colorful Indian village cartoon illustration description in English)."
+            f"Write an engaging, funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
+            "Return ONLY a valid JSON array of 4 objects (no markdown, no extra text). "
+            "Each object must have: "
+            "'telugu_narration' (2 expressive, natural spoken Telugu sentences with proper punctuation for voiceover) and "
+            "'image_prompt' (detailed Pixar/Disney 2D Indian village cartoon illustration in English, expressive characters, warm sunlight, high detail)."
         )
         raw = ask_ai(story_prompt)
         start_idx = raw.find("[")
@@ -166,41 +174,53 @@ def handle_ytvideo(message):
 
         for idx, scene in enumerate(scenes[:4]):
             narration = scene["telugu_narration"]
-            img_prompt = requests.utils.quote(scene["image_prompt"] + ", 2d cartoon animation style, vibrant colors")
-            img_url = f"https://image.pollinations.ai/prompt/{img_prompt}?width=540&height=960&nologo=true&seed={idx+10}"
+            style_suffix = ", Disney Pixar 2D cartoon illustration, expressive faces, rich vibrant colors, clean digital art, 4k"
+            img_prompt = requests.utils.quote(scene["image_prompt"] + style_suffix)
+            img_url = f"https://image.pollinations.ai/prompt/{img_prompt}?width=720&height=1280&model=flux&nologo=true&seed={idx+42}"
 
             img_path = f"scene_{idx}.jpg"
             aud_path = f"voice_{idx}.mp3"
             temp_files.extend([img_path, aud_path])
 
-            # Download Image (with solid color fallback if busy)
+            # Download High-Res Flux Cartoon Image
             try:
-                r = requests.get(img_url, timeout=20)
-                if r.status_code == 200 and len(r.content) > 1000:
+                r = requests.get(img_url, timeout=30)
+                if r.status_code == 200 and len(r.content) > 2000:
                     with open(img_path, "wb") as f:
                         f.write(r.content)
                 else:
-                    raise ValueError("Fallback image")
+                    raise ValueError("Image download fallback")
             except Exception:
                 colors = [(255, 220, 130), (180, 235, 255), (200, 255, 200), (255, 200, 220)]
-                im = Image.new("RGB", (540, 960), colors[idx % 4])
+                im = Image.new("RGB", (720, 1280), colors[idx % 4])
                 im.save(img_path)
 
-            # Generate Telugu Voice
-            tts = gTTS(text=narration, lang="te")
-            tts.save(aud_path)
+            # Generate Natural Neural Telugu Voiceover
+            make_telugu_voice(narration, aud_path)
 
             audio_clip = AudioFileClip(aud_path)
-            img_clip = ImageClip(img_path).with_duration(audio_clip.duration + 0.4).with_audio(audio_clip)
-            clips.append(img_clip)
+            dur = audio_clip.duration + 0.4
+
+            # Smooth Ken Burns Zoom-In Effect
+            base_clip = ImageClip(img_path).with_duration(dur)
+            zoomed_clip = base_clip.resized(lambda t: 1 + 0.04 * (t / dur)).with_position("center")
+            final_scene = zoomed_clip.with_audio(audio_clip)
+            clips.append(final_scene)
 
         final_video = concatenate_videoclips(clips, method="compose")
-        out_path = "asn_toons_short.mp4"
+        out_path = "asn_toons_hd.mp4"
         temp_files.append(out_path)
-        final_video.write_videofile(out_path, fps=10, codec="libx264", audio_codec="aac", logger=None)
+        final_video.write_videofile(
+            out_path,
+            fps=20,
+            codec="libx264",
+            audio_codec="aac",
+            bitrate="2500k",
+            logger=None
+        )
 
         with open(out_path, "rb") as vf:
-            bot.send_video(message.chat.id, vf, caption=f"🎥 *ASN TOONS:* {topic}", parse_mode="Markdown")
+            bot.send_video(message.chat.id, vf, caption=f"🎥 *ASN TOONS HD:* {topic}", parse_mode="Markdown")
 
         final_video.close()
         for c in clips:
@@ -222,5 +242,5 @@ def handle_all(message):
         bot.reply_to(message, f"సర్వర్ బిజీగా ఉంది: {e}")
 
 if __name__ == "__main__":
-    print("ASN TOONS & Zerodha Agent Started...")
+    print("ASN TOONS HD & Zerodha Agent Started...")
     bot.infinity_polling(timeout=60, long_polling_timeout=60)
