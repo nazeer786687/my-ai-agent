@@ -5,3 +5,4 @@ yfinance
 edge-tts
 Pillow
 moviepy
+flask
