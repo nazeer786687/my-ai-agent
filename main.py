@@ -1,10 +1,13 @@
 import os
 import json
+import time
 import asyncio
+import threading
 import requests
 import yfinance as yf
 import telebot
 import edge_tts
+from flask import Flask
 from PIL import Image
 from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 from google import genai
@@ -16,8 +19,19 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Render Web Service Port Keeper (Prevents Timed Out)
+app = Flask(__name__)
+
+@app.route("/")
+def health_check():
+    return "ASN TOONS & Zerodha Bot is Live!", 200
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 WATCHLIST_FILE = "watchlist.json"
 DEFAULT_STOCKS = [
@@ -182,7 +196,6 @@ def handle_ytvideo(message):
             aud_path = f"voice_{idx}.mp3"
             temp_files.extend([img_path, aud_path])
 
-            # Download High-Res Flux Cartoon Image
             try:
                 r = requests.get(img_url, timeout=30)
                 if r.status_code == 200 and len(r.content) > 2000:
@@ -195,13 +208,11 @@ def handle_ytvideo(message):
                 im = Image.new("RGB", (720, 1280), colors[idx % 4])
                 im.save(img_path)
 
-            # Generate Natural Neural Telugu Voiceover
             make_telugu_voice(narration, aud_path)
 
             audio_clip = AudioFileClip(aud_path)
             dur = audio_clip.duration + 0.4
 
-            # Smooth Ken Burns Zoom-In Effect
             base_clip = ImageClip(img_path).with_duration(dur)
             zoomed_clip = base_clip.resized(lambda t: 1 + 0.04 * (t / dur)).with_position("center")
             final_scene = zoomed_clip.with_audio(audio_clip)
@@ -242,5 +253,14 @@ def handle_all(message):
         bot.reply_to(message, f"సర్వర్ బిజీగా ఉంది: {e}")
 
 if __name__ == "__main__":
+    # Start Flask server in background so Render detects the open port immediately
+    threading.Thread(target=run_web_server, daemon=True).start()
+    time.sleep(3)
+    bot.remove_webhook()
     print("ASN TOONS HD & Zerodha Agent Started...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=1, timeout=30)
+        except Exception as e:
+            print(f"Polling retry: {e}")
+            time.sleep(5)
