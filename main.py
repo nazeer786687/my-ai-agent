@@ -10,7 +10,7 @@ import telebot
 import edge_tts
 import imageio_ffmpeg
 from flask import Flask, request
-from PIL import Image, ImageDraw
+from PIL import Image, ImageOps
 from google import genai
 from google.genai import types
 
@@ -98,8 +98,7 @@ def get_live_gold_report() -> str:
             f"• *24K (999 స్వచ్ఛమైనది):* ₹{retail_24k:,}\n"
             f"• *22K (916 ఆభరణాలు):* ₹{retail_22k:,}\n"
             f"• *18K బంగారం:* ₹{retail_18k:,}\n\n"
-            f"📊 _అంతర్జాతీయ స్పాట్: ${oz_usd:,.2f}/oz | USD/INR: ₹{usd_inr:.2f}_\n"
-            "_(గమనిక: 6% దిగుమతి సుంకం + 3% GST కలిపిన లైవ్ స్పాట్ ధర)_"
+            f"📊 _అంతర్జాతీయ స్పాట్: ${oz_usd:,.2f}/oz | USD/INR: ₹{usd_inr:.2f}_"
         )
     except Exception as e:
         return f"⚠️ లైవ్ బంగారం ధర లోడ్ కాలేదు: {e}"
@@ -115,32 +114,38 @@ async def _voice_async(text: str, out: str, voice: str = "te-IN-MohanNeural"):
 def make_telugu_voice(text: str, out: str):
     asyncio.run(_voice_async(text, out))
 
-def download_hd_cartoon(prompt_text: str, save_path: str, seed: int):
-    suffix = ", Pixar Disney 3D cartoon animation style, Indian village background, expressive funny characters, vibrant sunlight, high detail"
+def download_clean_cartoon(prompt_text: str, save_path: str, seed: int, prev_valid_path: str = None):
+    # Clean 2D Indian cartoon style prevents distorted faces
+    suffix = ", clean 2D Indian cartoon TV show style, bold clean outlines, clear expressive faces, bright vibrant colors, no distorted faces, high quality digital illustration"
     q_prompt = requests.utils.quote(prompt_text + suffix)
     urls = [
         f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&model=flux&nologo=true&seed={seed}",
-        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&model=turbo&nologo=true&seed={seed+50}",
-        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&nologo=true&seed={seed+99}"
+        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&model=turbo&nologo=true&seed={seed+33}",
+        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&nologo=true&seed={seed+77}"
     ]
     for url in urls:
-        for _ in range(2):
+        for _ in range(3):
             try:
-                r = requests.get(url, timeout=35)
-                if r.status_code == 200 and len(r.content) > 8000:
+                r = requests.get(url, timeout=40)
+                if r.status_code == 200 and len(r.content) > 10000:
                     with open(save_path, "wb") as f:
                         f.write(r.content)
                     with Image.open(save_path) as im:
                         im.verify()
-                    return True
+                    return save_path
             except Exception:
-                time.sleep(3)
+                time.sleep(4)
 
-    im = Image.new("RGB", (768, 1344), (255, 195, 77))
-    draw = ImageDraw.Draw(im)
-    draw.rectangle([40, 40, 728, 1304], outline=(180, 60, 0), width=12)
+    # Never show blank yellow box: reuse mirrored previous valid cartoon scene!
+    if prev_valid_path and os.path.exists(prev_valid_path):
+        with Image.open(prev_valid_path) as im:
+            mirrored = ImageOps.mirror(im)
+            mirrored.save(save_path)
+        return save_path
+
+    im = Image.new("RGB", (768, 1344), (135, 206, 235))
     im.save(save_path)
-    return False
+    return save_path
 
 @bot.message_handler(commands=["watchlist"])
 def handle_watchlist(message):
@@ -201,11 +206,11 @@ def create_video_task(chat_id: int, topic: str):
     temp_files = []
     try:
         story_prompt = (
-            f"Write an entertaining 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
-            "Start Scene 1 with an exciting hook mentioning the main character name. "
+            f"Write a funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
+            "Start Scene 1 with an exciting hook mentioning the character name. "
             "Return ONLY a valid JSON array of 4 objects (no markdown). "
             "Keys: 'telugu_narration' (2 expressive spoken Telugu sentences) and "
-            "'image_prompt' (detailed Pixar 3D Indian village cartoon scene in English, consistent character appearance)."
+            "'image_prompt' (simple, clear close-up 2D cartoon scene in English, maximum 2 characters, clear faces)."
         )
         raw = ask_ai(story_prompt)
         s_idx = raw.find("[")
@@ -214,10 +219,11 @@ def create_video_task(chat_id: int, topic: str):
 
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         part_videos = []
+        last_valid_img = None
 
         for idx, scene in enumerate(scenes[:4]):
             if idx > 0:
-                time.sleep(4)  # Prevents Pollinations rate-limit so all 4 scenes get real images!
+                time.sleep(6)  # 6s gap guarantees Pollinations delivers real cartoon images for all scenes
 
             narration = scene["telugu_narration"]
             img_path = f"scene_{idx}.jpg"
@@ -225,20 +231,20 @@ def create_video_task(chat_id: int, topic: str):
             part_path = f"part_{idx}.mp4"
             temp_files.extend([img_path, aud_path, part_path])
 
-            download_hd_cartoon(scene["image_prompt"], img_path, idx + 77)
+            last_valid_img = download_clean_cartoon(scene["image_prompt"], img_path, idx + 101, last_valid_img)
             make_telugu_voice(narration, aud_path)
 
-            # Crop bottom watermark (1.08x) + Smooth Ken Burns zoom-in motion
+            # Crop watermark + noticeable smooth zoom-in animation
             vf_filter = (
-                "scale=800:1422,crop=720:1280:40:40,"
-                "zoompan=z='min(zoom+0.0008,1.12)':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=720x1280,"
+                "scale=820:1458,crop=720:1280:50:50,"
+                "zoompan=z='min(zoom+0.0022,1.22)':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=720x1280,"
                 "format=yuv420p"
             )
             cmd = [
                 ffmpeg_exe, "-y", "-i", img_path, "-i", aud_path,
                 "-vf", vf_filter,
                 "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1",
-                "-preset", "ultrafast", "-crf", "22", "-r", "24",
+                "-preset", "ultrafast", "-crf", "21", "-r", "24",
                 "-c:a", "aac", "-ar", "44100", "-b:a", "128k",
                 "-shortest", part_path
             ]
@@ -266,7 +272,7 @@ def create_video_task(chat_id: int, topic: str):
                 width=720,
                 height=1280,
                 supports_streaming=True,
-                caption=f"🎥 *ASN TOONS HD (No Watermark + Zoom):* {topic}",
+                caption=f"🎥 *ASN TOONS 2D HD:* {topic}",
                 parse_mode="Markdown"
             )
 
@@ -284,7 +290,7 @@ def handle_ytvideo(message):
         topic = "కొంటె కామయ్య పిసినారితనం కథ"
     bot.reply_to(
         message,
-        f"🎬 *'{topic}'* కోసం 4 సీన్ల Pixar 3D కార్టూన్ + జూమ్ యానిమేషన్ వీడియో తయారు చేస్తున్నాను (25-30 సెకన్లు)...",
+        f"🎬 *'{topic}'* కోసం క్లీన్ 2D కార్టూన్ బొమ్మలు + స్మూత్ జూమ్ యానిమేషన్‌తో వీడియో తయారు చేస్తున్నాను (35-40 సెకన్లు)...",
         parse_mode="Markdown"
     )
     threading.Thread(target=create_video_task, args=(message.chat.id, topic), daemon=True).start()
