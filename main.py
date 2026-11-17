@@ -2,13 +2,14 @@ import os
 import json
 import asyncio
 import threading
+import subprocess
 import requests
 import yfinance as yf
 import telebot
 import edge_tts
+import imageio_ffmpeg
 from flask import Flask, request
 from PIL import Image
-from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 from google import genai
 from google.genai import types
 
@@ -140,6 +141,7 @@ def del_stock(message):
     bot.reply_to(message, f"🗑️ {sym} తీసివేయబడింది.")
 
 def create_video_task(chat_id: int, topic: str):
+    temp_files = []
     try:
         story_prompt = (
             f"Write a funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
@@ -152,8 +154,8 @@ def create_video_task(chat_id: int, topic: str):
         e_idx = raw.rfind("]") + 1
         scenes = json.loads(raw[s_idx:e_idx])
 
-        clips = []
-        temp_files = []
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        part_videos = []
 
         for idx, scene in enumerate(scenes[:4]):
             narration = scene["telugu_narration"]
@@ -163,12 +165,12 @@ def create_video_task(chat_id: int, topic: str):
 
             img_path = f"scene_{idx}.jpg"
             aud_path = f"voice_{idx}.mp3"
-            temp_files.extend([img_path, aud_path])
+            part_path = f"part_{idx}.mp4"
+            temp_files.extend([img_path, aud_path, part_path])
 
             try:
                 r = requests.get(img_url, timeout=25)
-                ok = (r.status_code == 200) and (len(r.content) > 2000)
-                if ok:
+                if r.status_code == 200 and len(r.content) > 2000:
                     with open(img_path, "wb") as f:
                         f.write(r.content)
                 else:
@@ -180,34 +182,37 @@ def create_video_task(chat_id: int, topic: str):
 
             make_telugu_voice(narration, aud_path)
 
-            audio_clip = AudioFileClip(aud_path)
-            img_clip = ImageClip(img_path).with_duration(audio_clip.duration + 0.3).with_audio(audio_clip)
-            clips.append(img_clip)
+            cmd = [
+                ffmpeg_exe, "-y", "-loop", "1", "-i", img_path, "-i", aud_path,
+                "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast",
+                "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest", part_path
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            part_videos.append(part_path)
 
-        final_video = concatenate_videoclips(clips, method="compose")
+        list_file = "concat_list.txt"
         out_path = "asn_toons_hd.mp4"
-        temp_files.append(out_path)
-        final_video.write_videofile(
-            out_path,
-            fps=12,
-            codec="libx264",
-            audio_codec="aac",
-            preset="ultrafast",
-            logger=None
-        )
+        temp_files.extend([list_file, out_path])
+
+        with open(list_file, "w") as lf:
+            for pv in part_videos:
+                lf.write(f"file '{pv}'\n")
+
+        concat_cmd = [
+            ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+            "-c", "copy", out_path
+        ]
+        subprocess.run(concat_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         with open(out_path, "rb") as vf:
             bot.send_video(chat_id, vf, caption=f"🎥 *ASN TOONS:* {topic}", parse_mode="Markdown")
 
-        final_video.close()
-        for c in clips:
-            c.close()
+    except Exception as e:
+        bot.send_message(chat_id, f"⚠️ వీడియో లోపం: {e}")
+    finally:
         for tf in temp_files:
             if os.path.exists(tf):
                 os.remove(tf)
-
-    except Exception as e:
-        bot.send_message(chat_id, f"⚠️ వీడియో తయారీలో లోపం: {e}")
 
 @bot.message_handler(commands=["ytvideo"])
 def handle_ytvideo(message):
@@ -216,7 +221,7 @@ def handle_ytvideo(message):
         topic = "కొంటె కామయ్య పిసినారితనం కథ"
     bot.reply_to(
         message,
-        f"🎬 *'{topic}'* కోసం కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (15-20 సెకన్లు)...",
+        f"🎬 *'{topic}'* కోసం కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (10-15 సెకన్లు)...",
         parse_mode="Markdown"
     )
     threading.Thread(target=create_video_task, args=(message.chat.id, topic), daemon=True).start()
