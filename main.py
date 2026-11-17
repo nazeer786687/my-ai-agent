@@ -1,13 +1,12 @@
 import os
 import json
-import time
 import asyncio
 import threading
 import requests
 import yfinance as yf
 import telebot
 import edge_tts
-from flask import Flask
+from flask import Flask, request
 from PIL import Image
 from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 from google import genai
@@ -16,18 +15,11 @@ from google.genai import types
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://nazeer-ai-bot.onrender.com")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 client = genai.Client(api_key=GEMINI_API_KEY)
 app = Flask(__name__)
-
-@app.route("/")
-def health_check():
-    return "ASN TOONS & Zerodha Bot is Live!", 200
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
 
 WATCHLIST_FILE = "watchlist.json"
 DEFAULT_STOCKS = [
@@ -147,18 +139,7 @@ def del_stock(message):
         save_watchlist(stocks)
     bot.reply_to(message, f"🗑️ {sym} తీసివేయబడింది.")
 
-@bot.message_handler(commands=["ytvideo"])
-def handle_ytvideo(message):
-    topic = message.text.replace("/ytvideo", "").strip()
-    if not topic:
-        topic = "కొంటె కామయ్య పిసినారితనం కథ"
-
-    bot.reply_to(
-        message,
-        f"🎬 *'{topic}'* కోసం కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను...",
-        parse_mode="Markdown"
-    )
-
+def create_video_task(chat_id: int, topic: str):
     try:
         story_prompt = (
             f"Write a funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
@@ -216,7 +197,7 @@ def handle_ytvideo(message):
         )
 
         with open(out_path, "rb") as vf:
-            bot.send_video(message.chat.id, vf, caption=f"🎥 *ASN TOONS:* {topic}", parse_mode="Markdown")
+            bot.send_video(chat_id, vf, caption=f"🎥 *ASN TOONS:* {topic}", parse_mode="Markdown")
 
         final_video.close()
         for c in clips:
@@ -226,7 +207,19 @@ def handle_ytvideo(message):
                 os.remove(tf)
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"⚠️ వీడియో తయారీలో లోపం: {e}")
+        bot.send_message(chat_id, f"⚠️ వీడియో తయారీలో లోపం: {e}")
+
+@bot.message_handler(commands=["ytvideo"])
+def handle_ytvideo(message):
+    topic = message.text.replace("/ytvideo", "").strip()
+    if not topic:
+        topic = "కొంటె కామయ్య పిసినారితనం కథ"
+    bot.reply_to(
+        message,
+        f"🎬 *'{topic}'* కోసం కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (15-20 సెకన్లు)...",
+        parse_mode="Markdown"
+    )
+    threading.Thread(target=create_video_task, args=(message.chat.id, topic), daemon=True).start()
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
@@ -236,14 +229,28 @@ def handle_all(message):
     except Exception as e:
         bot.reply_to(message, f"సర్వర్ బిజీగా ఉంది: {e}")
 
+@app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+def telegram_webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "OK", 200
+
+@app.route("/")
+def health_check():
+    webhook_url = f"{RENDER_URL}/{TELEGRAM_TOKEN}"
+    try:
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}", timeout=10)
+    except Exception:
+        pass
+    return "ASN TOONS & Zerodha Bot Webhook Active!", 200
+
 if __name__ == "__main__":
-    threading.Thread(target=run_web_server, daemon=True).start()
-    time.sleep(3)
-    bot.remove_webhook()
-    print("ASN TOONS & Zerodha Agent Started...")
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=1, timeout=30)
-        except Exception as e:
-            print(f"Polling retry: {e}")
-            time.sleep(5)
+    port = int(os.environ.get("PORT", 10000))
+    webhook_url = f"{RENDER_URL}/{TELEGRAM_TOKEN}"
+    try:
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}", timeout=10)
+        print("Webhook set successfully!")
+    except Exception as e:
+        print(f"Webhook setup error: {e}")
+    app.run(host="0.0.0.0", port=port)
