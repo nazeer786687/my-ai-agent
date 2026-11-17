@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import threading
 import subprocess
@@ -9,7 +10,7 @@ import telebot
 import edge_tts
 import imageio_ffmpeg
 from flask import Flask, request
-from PIL import Image
+from PIL import Image, ImageDraw
 from google import genai
 from google.genai import types
 
@@ -85,6 +86,33 @@ async def _voice_async(text: str, out: str, voice: str = "te-IN-MohanNeural"):
 def make_telugu_voice(text: str, out: str):
     asyncio.run(_voice_async(text, out))
 
+def download_hd_cartoon(prompt_text: str, save_path: str, seed: int):
+    suffix = ", Pixar Disney 2D cartoon animation style, Indian village setting, expressive funny faces, vibrant rich colors, 4k digital illustration"
+    q_prompt = requests.utils.quote(prompt_text + suffix)
+    urls = [
+        f"https://image.pollinations.ai/prompt/{q_prompt}?width=720&height=1280&model=flux&nologo=true&seed={seed}",
+        f"https://image.pollinations.ai/prompt/{q_prompt}?width=720&height=1280&nologo=true&seed={seed+100}"
+    ]
+    for url in urls:
+        for _ in range(2):
+            try:
+                r = requests.get(url, timeout=30)
+                if r.status_code == 200 and len(r.content) > 5000:
+                    with open(save_path, "wb") as f:
+                        f.write(r.content)
+                    # Verify valid image
+                    with Image.open(save_path) as im:
+                        im.verify()
+                    return
+            except Exception:
+                time.sleep(1)
+
+    # Attractive gradient fallback if image API is completely down
+    im = Image.new("RGB", (720, 1280), (255, 195, 77))
+    draw = ImageDraw.Draw(im)
+    draw.rectangle([40, 40, 680, 1240], outline=(180, 60, 0), width=12)
+    im.save(save_path)
+
 @bot.message_handler(commands=["watchlist"])
 def handle_watchlist(message):
     bot.reply_to(message, "📊 మీ Zerodha లాంగ్-టర్మ్ సేఫ్టీ వాచ్‌లిస్ట్ లోడ్ అవుతోంది...")
@@ -147,7 +175,7 @@ def create_video_task(chat_id: int, topic: str):
             f"Write a funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
             "Return ONLY a valid JSON array of 4 objects (no markdown). "
             "Keys: 'telugu_narration' (2 expressive spoken Telugu sentences) and "
-            "'image_prompt' (vivid Disney 2D Indian village cartoon illustration in English)."
+            "'image_prompt' (detailed Pixar Disney 2D Indian village cartoon scene in English, expressive characters)."
         )
         raw = ask_ai(story_prompt)
         s_idx = raw.find("[")
@@ -159,33 +187,22 @@ def create_video_task(chat_id: int, topic: str):
 
         for idx, scene in enumerate(scenes[:4]):
             narration = scene["telugu_narration"]
-            suffix = ", Disney 2D cartoon illustration, expressive faces, vibrant colors"
-            q_prompt = requests.utils.quote(scene["image_prompt"] + suffix)
-            img_url = f"https://image.pollinations.ai/prompt/{q_prompt}?width=600&height=1066&model=flux&nologo=true&seed={idx+42}"
-
             img_path = f"scene_{idx}.jpg"
             aud_path = f"voice_{idx}.mp3"
             part_path = f"part_{idx}.mp4"
             temp_files.extend([img_path, aud_path, part_path])
 
-            try:
-                r = requests.get(img_url, timeout=25)
-                if r.status_code == 200 and len(r.content) > 2000:
-                    with open(img_path, "wb") as f:
-                        f.write(r.content)
-                else:
-                    raise ValueError("Fallback")
-            except Exception:
-                colors = [(255, 220, 130), (180, 235, 255), (200, 255, 200), (255, 200, 220)]
-                im = Image.new("RGB", (600, 1066), colors[idx % 4])
-                im.save(img_path)
-
+            download_hd_cartoon(scene["image_prompt"], img_path, idx + 55)
             make_telugu_voice(narration, aud_path)
 
+            # Universal Telegram-playable H.264 + 24fps + yuv420p encoding
             cmd = [
-                ffmpeg_exe, "-y", "-loop", "1", "-i", img_path, "-i", aud_path,
-                "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast",
-                "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest", part_path
+                ffmpeg_exe, "-y", "-loop", "1", "-framerate", "24", "-i", img_path, "-i", aud_path,
+                "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1",
+                "-preset", "ultrafast", "-crf", "23", "-r", "24",
+                "-c:a", "aac", "-ar", "44100", "-b:a", "128k",
+                "-shortest", part_path
             ]
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             part_videos.append(part_path)
@@ -200,12 +217,20 @@ def create_video_task(chat_id: int, topic: str):
 
         concat_cmd = [
             ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
-            "-c", "copy", out_path
+            "-c", "copy", "-movflags", "+faststart", out_path
         ]
         subprocess.run(concat_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         with open(out_path, "rb") as vf:
-            bot.send_video(chat_id, vf, caption=f"🎥 *ASN TOONS:* {topic}", parse_mode="Markdown")
+            bot.send_video(
+                chat_id,
+                vf,
+                width=720,
+                height=1280,
+                supports_streaming=True,
+                caption=f"🎥 *ASN TOONS HD:* {topic}",
+                parse_mode="Markdown"
+            )
 
     except Exception as e:
         bot.send_message(chat_id, f"⚠️ వీడియో లోపం: {e}")
@@ -221,7 +246,7 @@ def handle_ytvideo(message):
         topic = "కొంటె కామయ్య పిసినారితనం కథ"
     bot.reply_to(
         message,
-        f"🎬 *'{topic}'* కోసం కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (10-15 సెకన్లు)...",
+        f"🎬 *'{topic}'* కోసం HD 720x1280 కార్టూన్ బొమ్మలు + నేచురల్ తెలుగు వాయిస్‌తో వీడియో తయారు చేస్తున్నాను (15-20 సెకన్లు)...",
         parse_mode="Markdown"
     )
     threading.Thread(target=create_video_task, args=(message.chat.id, topic), daemon=True).start()
