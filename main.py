@@ -79,6 +79,40 @@ def ask_ai(prompt: str, use_search: bool = False) -> str:
             last_err = str(e)
     raise RuntimeError(f"AI Error: {last_err}")
 
+# Live Accurate Indian Spot Gold Rate Calculator (24K, 22K, 18K)
+def get_live_gold_report() -> str:
+    try:
+        gold_hist = yf.Ticker("GC=F").history(period="2d")
+        usd_inr_hist = yf.Ticker("INR=X").history(period="2d")
+
+        if gold_hist.empty or usd_inr_hist.empty:
+            raise ValueError("Market feed temporarily unavailable")
+
+        oz_usd = float(gold_hist["Close"].iloc[-1])
+        usd_inr = float(usd_inr_hist["Close"].iloc[-1])
+
+        # 1 Troy Ounce = 31.1034768 grams
+        # Indian retail spot includes ~6% customs duty + 3% GST = 1.0918 multiplier
+        base_10g_inr = (oz_usd / 31.1034768) * usd_inr * 10
+        retail_24k = round(base_10g_inr * 1.0918)
+        retail_22k = round(retail_24k * 0.916)
+        retail_18k = round(retail_24k * 0.750)
+
+        return (
+            "🪙 *లైవ్ ఇండియా / హైదరాబాద్ & కోదాడ స్పాట్ బంగారం ధరలు (10 గ్రాములు)*\n\n"
+            f"• *24K (999 స్వచ్ఛమైనది):* ₹{retail_24k:,}\n"
+            f"• *22K (916 ఆభరణాలు):* ₹{retail_22k:,}\n"
+            f"• *18K బంగారం:* ₹{retail_18k:,}\n\n"
+            f"📊 _అంతర్జాతీయ స్పాట్: ${oz_usd:,.2f}/oz | USD/INR: ₹{usd_inr:.2f}_\n"
+            "_(గమనిక: 6% దిగుమతి సుంకం + 3% GST కలిపిన లైవ్ స్పాట్ ధర; షాపు తరుగు/మజూరీ అదనం)_"
+        )
+    except Exception as e:
+        return f"⚠️ లైవ్ బంగారం ధర లోడ్ కాలేదు: {e}"
+
+@bot.message_handler(commands=["gold"])
+def handle_gold_cmd(message):
+    bot.reply_to(message, get_live_gold_report(), parse_mode="Markdown")
+
 async def _voice_async(text: str, out: str, voice: str = "te-IN-MohanNeural"):
     comm = edge_tts.Communicate(text, voice, rate="+5%")
     await comm.save(out)
@@ -100,14 +134,12 @@ def download_hd_cartoon(prompt_text: str, save_path: str, seed: int):
                 if r.status_code == 200 and len(r.content) > 5000:
                     with open(save_path, "wb") as f:
                         f.write(r.content)
-                    # Verify valid image
                     with Image.open(save_path) as im:
                         im.verify()
                     return
             except Exception:
                 time.sleep(1)
 
-    # Attractive gradient fallback if image API is completely down
     im = Image.new("RGB", (720, 1280), (255, 195, 77))
     draw = ImageDraw.Draw(im)
     draw.rectangle([40, 40, 680, 1240], outline=(180, 60, 0), width=12)
@@ -195,7 +227,6 @@ def create_video_task(chat_id: int, topic: str):
             download_hd_cartoon(scene["image_prompt"], img_path, idx + 55)
             make_telugu_voice(narration, aud_path)
 
-            # Universal Telegram-playable H.264 + 24fps + yuv420p encoding
             cmd = [
                 ffmpeg_exe, "-y", "-loop", "1", "-framerate", "24", "-i", img_path, "-i", aud_path,
                 "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
@@ -253,6 +284,12 @@ def handle_ytvideo(message):
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
+    text_lower = message.text.lower()
+    # Auto-detect gold rate queries in English or Telugu
+    if any(k in text_lower for k in ["gold", "బంగారం", "bangaram", "22k", "24k"]):
+        bot.reply_to(message, get_live_gold_report(), parse_mode="Markdown")
+        return
+
     try:
         reply = ask_ai(f"Reply in helpful, polite Telugu to: {message.text}")
         bot.reply_to(message, reply)
