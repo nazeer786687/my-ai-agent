@@ -114,38 +114,63 @@ async def _voice_async(text: str, out: str, voice: str = "te-IN-MohanNeural"):
 def make_telugu_voice(text: str, out: str):
     asyncio.run(_voice_async(text, out))
 
-def download_clean_cartoon(prompt_text: str, save_path: str, seed: int, prev_valid_path: str = None):
-    # Clean 2D Indian cartoon style prevents distorted faces
-    suffix = ", clean 2D Indian cartoon TV show style, bold clean outlines, clear expressive faces, bright vibrant colors, no distorted faces, high quality digital illustration"
-    q_prompt = requests.utils.quote(prompt_text + suffix)
-    urls = [
-        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&model=flux&nologo=true&seed={seed}",
-        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&model=turbo&nologo=true&seed={seed+33}",
-        f"https://image.pollinations.ai/prompt/{q_prompt}?width=768&height=1344&nologo=true&seed={seed+77}"
-    ]
-    for url in urls:
-        for _ in range(3):
-            try:
-                r = requests.get(url, timeout=40)
-                if r.status_code == 200 and len(r.content) > 10000:
-                    with open(save_path, "wb") as f:
-                        f.write(r.content)
-                    with Image.open(save_path) as im:
-                        im.verify()
-                    return save_path
-            except Exception:
-                time.sleep(4)
+# NEW: Google Flow Pro Director Command (/flow)
+@bot.message_handler(commands=["flow"])
+def handle_google_flow(message):
+    topic = message.text.replace("/flow", "").strip()
+    if not topic:
+        topic = "కొంటె కామయ్య పిసినారితనం కథ"
 
-    # Never show blank yellow box: reuse mirrored previous valid cartoon scene!
-    if prev_valid_path and os.path.exists(prev_valid_path):
-        with Image.open(prev_valid_path) as im:
-            mirrored = ImageOps.mirror(im)
-            mirrored.save(save_path)
-        return save_path
+    bot.reply_to(
+        message,
+        f"🎬 *Google Flow Pro* కోసం *'{topic}'* స్క్రిప్ట్, 4 సినిమాటిక్ వీడియో ప్రాంప్ట్‌లు & నేచురల్ తెలుగు వాయిస్ MP3 సిద్ధం చేస్తున్నాను...",
+        parse_mode="Markdown"
+    )
 
-    im = Image.new("RGB", (768, 1344), (135, 206, 235))
-    im.save(save_path)
-    return save_path
+    try:
+        prompt = (
+            f"Create a 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
+            "Return ONLY a valid JSON object (no markdown) with keys: "
+            "'character_sheet' (exact consistent visual description of main character in English: clothes, age, hair, face), "
+            "'scenes' (array of 4 objects, each having 'telugu_voice' - 2 natural expressive spoken Telugu sentences, "
+            "and 'flow_prompt' - detailed 3D Pixar-style animated video prompt for Google Veo/Flow including camera movement, character action, Indian village lighting, 9:16 vertical)."
+        )
+        raw = ask_ai(prompt)
+        s_idx = raw.find("{")
+        e_idx = raw.rfind("}") + 1
+        data = json.loads(raw[s_idx:e_idx])
+
+        char_desc = data.get("character_sheet", "")
+        scenes = data.get("scenes", [])[:4]
+
+        full_telugu_script = " ".join([s["telugu_voice"] for s in scenes])
+        audio_path = "asn_flow_voiceover.mp3"
+        make_telugu_voice(full_telugu_script, audio_path)
+
+        msg_lines = [f"🎥 *GOOGLE FLOW PRO STUDIO PACK: {topic}*\n"]
+        msg_lines.append(f"👤 *Character Style:* `{char_desc}`\n")
+
+        for i, sc in enumerate(scenes, 1):
+            msg_lines.append(f"*Scene {i} (8 sec):*")
+            msg_lines.append(f"🗣️ _{sc['telugu_voice']}_")
+            msg_lines.append(f"📋 Copy Prompt:\n`{char_desc}. {sc['flow_prompt']}, 3D Pixar animation style, vibrant colors, smooth camera motion`\n")
+
+        bot.send_message(message.chat.id, "\n".join(msg_lines), parse_mode="Markdown")
+
+        with open(audio_path, "rb") as af:
+            bot.send_audio(
+                message.chat.id,
+                af,
+                title=f"ASN TOONS - {topic}",
+                performer="ASN TOONS Telugu",
+                caption="🎙️ *పూర్తి కథ నేచురల్ తెలుగు వాయిస్ ఓవర్ (MP3)* — Google Flow వీడియో క్లిప్‌లకు నేరుగా యాడ్ చేయండి!"
+            )
+
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ లోపం: {e}")
 
 @bot.message_handler(commands=["watchlist"])
 def handle_watchlist(message):
@@ -201,99 +226,6 @@ def del_stock(message):
         stocks.remove(sym)
         save_watchlist(stocks)
     bot.reply_to(message, f"🗑️ {sym} తీసివేయబడింది.")
-
-def create_video_task(chat_id: int, topic: str):
-    temp_files = []
-    try:
-        story_prompt = (
-            f"Write a funny 4-scene Telugu comedy moral story for YouTube Shorts on: '{topic}'. "
-            "Start Scene 1 with an exciting hook mentioning the character name. "
-            "Return ONLY a valid JSON array of 4 objects (no markdown). "
-            "Keys: 'telugu_narration' (2 expressive spoken Telugu sentences) and "
-            "'image_prompt' (simple, clear close-up 2D cartoon scene in English, maximum 2 characters, clear faces)."
-        )
-        raw = ask_ai(story_prompt)
-        s_idx = raw.find("[")
-        e_idx = raw.rfind("]") + 1
-        scenes = json.loads(raw[s_idx:e_idx])
-
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        part_videos = []
-        last_valid_img = None
-
-        for idx, scene in enumerate(scenes[:4]):
-            if idx > 0:
-                time.sleep(6)  # 6s gap guarantees Pollinations delivers real cartoon images for all scenes
-
-            narration = scene["telugu_narration"]
-            img_path = f"scene_{idx}.jpg"
-            aud_path = f"voice_{idx}.mp3"
-            part_path = f"part_{idx}.mp4"
-            temp_files.extend([img_path, aud_path, part_path])
-
-            last_valid_img = download_clean_cartoon(scene["image_prompt"], img_path, idx + 101, last_valid_img)
-            make_telugu_voice(narration, aud_path)
-
-            # Crop watermark + noticeable smooth zoom-in animation
-            vf_filter = (
-                "scale=820:1458,crop=720:1280:50:50,"
-                "zoompan=z='min(zoom+0.0022,1.22)':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=720x1280,"
-                "format=yuv420p"
-            )
-            cmd = [
-                ffmpeg_exe, "-y", "-i", img_path, "-i", aud_path,
-                "-vf", vf_filter,
-                "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1",
-                "-preset", "ultrafast", "-crf", "21", "-r", "24",
-                "-c:a", "aac", "-ar", "44100", "-b:a", "128k",
-                "-shortest", part_path
-            ]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            part_videos.append(part_path)
-
-        list_file = "concat_list.txt"
-        out_path = "asn_toons_hd.mp4"
-        temp_files.extend([list_file, out_path])
-
-        with open(list_file, "w") as lf:
-            for pv in part_videos:
-                lf.write(f"file '{pv}'\n")
-
-        concat_cmd = [
-            ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
-            "-c", "copy", "-movflags", "+faststart", out_path
-        ]
-        subprocess.run(concat_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        with open(out_path, "rb") as vf:
-            bot.send_video(
-                chat_id,
-                vf,
-                width=720,
-                height=1280,
-                supports_streaming=True,
-                caption=f"🎥 *ASN TOONS 2D HD:* {topic}",
-                parse_mode="Markdown"
-            )
-
-    except Exception as e:
-        bot.send_message(chat_id, f"⚠️ వీడియో లోపం: {e}")
-    finally:
-        for tf in temp_files:
-            if os.path.exists(tf):
-                os.remove(tf)
-
-@bot.message_handler(commands=["ytvideo"])
-def handle_ytvideo(message):
-    topic = message.text.replace("/ytvideo", "").strip()
-    if not topic:
-        topic = "కొంటె కామయ్య పిసినారితనం కథ"
-    bot.reply_to(
-        message,
-        f"🎬 *'{topic}'* కోసం క్లీన్ 2D కార్టూన్ బొమ్మలు + స్మూత్ జూమ్ యానిమేషన్‌తో వీడియో తయారు చేస్తున్నాను (35-40 సెకన్లు)...",
-        parse_mode="Markdown"
-    )
-    threading.Thread(target=create_video_task, args=(message.chat.id, topic), daemon=True).start()
 
 @bot.message_handler(func=lambda m: True)
 def handle_all(message):
